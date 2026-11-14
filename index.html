@@ -21,7 +21,7 @@
       <input id="name" maxlength="16" placeholder="Dein Name" autocomplete="off" />
       <button id="joinBtn" class="big">Nummer ziehen &amp; rein</button>
       <button id="soloBtn" class="ghost">Allein üben</button>
-      <p class="help">WASD / Pfeile · Handy: links wischen</p>
+      <p class="help">WASD / Pfeile laufen · Leertaste: Vordrängeln<br />Handy: wischen + roter Knopf</p>
     </div>
   </div>
 
@@ -33,6 +33,10 @@
   </div>
   <div id="bubble" class="hidden"><span class="who">👔</span><span id="bubbleText"></span></div>
   <div id="center"></div>
+  <canvas id="minimap" class="hidden"></canvas>
+  <div id="powerHud"></div>
+  <div id="eventTag" class="hidden"></div>
+  <button id="dashBtn" class="hidden">DRÄNGELN</button>
   <div id="progress" class="hidden"><div id="progressFill"></div><span id="progressText">Formular ausfüllen…</span></div>
 
   <!-- Lobby -->
@@ -40,6 +44,7 @@
     <div id="lobbyMain">
       <div class="lobbyTitle">Wartebereich</div>
       <div id="playerList"></div>
+      <div id="lobbyScores" class="scoreLine"></div>
       <button id="startBtn" class="big">Behörde öffnen ▶</button>
     </div>
     <div id="qrBox">

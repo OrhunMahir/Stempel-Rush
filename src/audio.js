@@ -14,6 +14,7 @@ export const LINES = {
     "Ohne Anmeldung geht hier gar nichts!",
   ],
   stamp: ["Gestempelt. Der Nächste, bitte!", "So. Zack. Erledigt.", "Na gut. Ausnahmsweise."],
+  spot: ["HALT! Stehen bleiben!", "Sie da! Wo ist Ihre Wartenummer?", "Hier wird NICHT gerannt!", "Moment mal, junger Mensch!", "Zurück in die Schlange!"],
 };
 
 export function unlock() {
@@ -64,15 +65,30 @@ export async function play(name, { vol = 1, rate = 1 } = {}) {
   src.start();
 }
 
+let musicName = null;
 export async function music(name = "music", vol = 0.25) {
-  if (!ctx || musicNode) return;
+  if (!ctx || musicName === name) return;
+  musicName = name;
   const b = await load(name);
-  if (!b) return;
+  if (!b || musicName !== name) return;
+  const old = musicNode, oldGain = musicGain;
   musicNode = ctx.createBufferSource();
   musicNode.buffer = b; musicNode.loop = true;
-  musicGain = ctx.createGain(); musicGain.gain.value = vol;
+  musicGain = ctx.createGain(); musicGain.gain.value = 0;
+  musicGain.gain.linearRampToValueAtTime(vol, ctx.currentTime + 0.6);
   musicNode.connect(musicGain).connect(ctx.destination);
   musicNode.start();
+  if (old) { oldGain.gain.linearRampToValueAtTime(0, ctx.currentTime + 0.6); setTimeout(() => { try { old.stop(); } catch {} }, 700); }
+}
+
+let ambNode = null;
+export async function ambience(name = "ambience", vol = 0.16) {
+  if (!ctx || ambNode) return;
+  const b = await load(name);
+  if (!b || ambNode) return;
+  ambNode = ctx.createBufferSource(); ambNode.buffer = b; ambNode.loop = true;
+  const g = ctx.createGain(); g.gain.value = vol;
+  ambNode.connect(g).connect(ctx.destination); ambNode.start();
 }
 
 export function musicVolume(v) { if (musicGain) musicGain.gain.value = v; }

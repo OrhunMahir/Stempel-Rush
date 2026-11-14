@@ -2,7 +2,8 @@
 import { DurableObject } from "cloudflare:workers";
 
 const COLORS = ["#ff7a1a", "#2fb4ff", "#9b5cff", "#2ecc71", "#ff4f7b", "#ffd23f", "#00d1b2", "#c0c0c0"];
-const RACE_MS = 150_000;
+const RACE_MS = 120_000;
+const POINTS = [5, 3, 2];
 const COUNTDOWN_MS = 3_500;
 const RESULTS_MS = 12_000;
 const TICK_MS = 66;
@@ -31,6 +32,8 @@ export class GameRoom extends DurableObject {
     this.results = [];
     this.timer = null;
     this.nextId = 1;
+    this.round = 0;
+    this.scores = new Map(); // name -> points
   }
 
   async fetch(req) {
@@ -52,7 +55,7 @@ export class GameRoom extends DurableObject {
     server.addEventListener("close", bye);
     server.addEventListener("error", bye);
 
-    this.send(p, { t: "welcome", id, color, phase: this.phase, phaseEndsAt: this.phaseEndsAt, raceStart: this.raceStart, seed: this.seed, now: Date.now(), results: this.results });
+    this.send(p, { t: "welcome", id, color, phase: this.phase, phaseEndsAt: this.phaseEndsAt, raceStart: this.raceStart, seed: this.seed, round: this.round, now: Date.now(), results: this.results, scores: this.scoreList() });
     this.ensureTimer();
     return new Response(null, { status: 101, webSocket: client });
   }
@@ -78,6 +81,12 @@ export class GameRoom extends DurableObject {
       case "stamp":
         this.broadcast({ t: "stamp", id: p.id, n: m.n | 0 });
         break;
+      case "shove": {
+        const target = this.players.get(String(m.target));
+        if (target && this.phase === "race") this.send(target, { t: "shoved", by: p.name, dx: +m.dx || 0, dz: +m.dz || 0 });
+        this.broadcast({ t: "fxshove", id: p.id, target: String(m.target) });
+        break;
+      }
       case "finish":
         if (this.phase === "race" && !p.finished) {
           p.finished = true;
@@ -96,6 +105,7 @@ export class GameRoom extends DurableObject {
 
   startCountdown() {
     this.phase = "countdown";
+    this.round++;
     this.seed = (Math.random() * 1e9) | 0;
     this.results = [];
     this.raceStart = Date.now() + COUNTDOWN_MS;
@@ -113,12 +123,19 @@ export class GameRoom extends DurableObject {
       .sort((a, b) => b.stamps - a.stamps)
       .map((p) => ({ id: p.id, name: p.name, color: p.color, ms: 0, stamps: p.stamps }));
     this.results = [...this.results, ...unfinished];
+    this.results.forEach((r, i) => {
+      const pts = r.ms ? (POINTS[i] ?? 1) : 0;
+      r.pts = pts;
+      this.scores.set(r.name, (this.scores.get(r.name) || 0) + pts);
+      r.total = this.scores.get(r.name);
+    });
     this.broadcastPhase();
   }
 
   reset() {
     this.phase = "lobby";
     this.results = [];
+    this.scores.clear();
     if (this.timer) { clearInterval(this.timer); this.timer = null; }
   }
 
@@ -145,7 +162,11 @@ export class GameRoom extends DurableObject {
   }
 
   broadcastPhase() {
-    this.broadcast({ t: "phase", phase: this.phase, phaseEndsAt: this.phaseEndsAt, raceStart: this.raceStart, seed: this.seed, now: Date.now(), results: this.results });
+    this.broadcast({ t: "phase", phase: this.phase, phaseEndsAt: this.phaseEndsAt, raceStart: this.raceStart, seed: this.seed, round: this.round, now: Date.now(), results: this.results, scores: this.scoreList() });
+  }
+
+  scoreList() {
+    return [...this.scores.entries()].sort((a, b) => b[1] - a[1]).slice(0, 8);
   }
 
   send(p, m) {
