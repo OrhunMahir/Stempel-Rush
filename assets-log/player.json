@@ -1,0 +1,10 @@
+{
+  "name": "player",
+  "prompt": "full body game character, young international student, orange hoodie, backpack, sneakers, holding a blue document folder, friendly face, stylized cartoon low-poly game asset, bright clean colors, chunky proportions",
+  "model": "latest",
+  "poly": 20000,
+  "previewId": "01a1d980-0643-727b-8b73-159a982f03a3",
+  "refineId": "01a1d981-474a-72a6-a5cb-f84d60df283b",
+  "thumbnail": "https://assets.meshy.ai/7778760f-ab34-48cf-be6e-dc6182fb569f/tasks/01a1d981-474a-72a6-a5cb-f84d60df283b/output/preview.png?Expires=4948214400&Signature=Qtaq4jCRiKShSVVSYSdx~0b-pLCyp7foAOiqLEDe8iJth8DpKEyy~GeEd~~XKYAlhrEiCip41OSl~ab-nOyDol7CeQGISIzjC9AZXF8GeQ5cxXGsbZRKSYXClkt2Vzg7xwJF~fsXrLCXi7PpxcjBhHI6mJPyimOq9R5WjjgUkJiCJgHC8SmRvl3KO2lkgOSdExmj6eefntpr7myzytIdn0CfZ49O1pQuMiml5q9HIFt6uG6LW11BMTjUc4NC~~w1CDUVn89qHYDP2gG1Pawnr8OCd6uqy~GXsGcJhNnE~6xKtGc34d3n70R~et9at4~E3We3Tdf~C4OhCcq5C4XOrw__&Key-Pair-Id=K1VGYTHIYLM9UM",
+  "rigId": "01a1d982-0431-71f3-bbb9-99d252e0bbfd"
+}

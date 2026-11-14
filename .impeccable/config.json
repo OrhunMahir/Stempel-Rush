@@ -1,0 +1,17 @@
+{
+  "detector": {
+    "ignoreRules": [],
+    "ignoreFiles": [],
+    "ignoreValues": [
+      {
+        "rule": "hero-eyebrow-chip",
+        "value": "*",
+        "files": [
+          "index.html"
+        ],
+        "createdAt": "2026-11-14T10:19:52.038Z",
+        "reason": "Claude: the 'Ausländerbehörde München' label is an in-world official office sign on the game title card, not a SaaS eyebrow"
+      }
+    ]
+  }
+}

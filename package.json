@@ -1,0 +1,33 @@
+{
+  "name": "stempel-rush",
+  "version": "1.0.0",
+  "scripts": {
+    "dev": "vite --host",
+    "build": "vite build",
+    "preview": "npm run build && wrangler dev",
+    "deploy": "npm run build && wrangler deploy",
+    "meshy": "node tools/meshy.mjs"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/OrhunMahir/game_jam_hackathon.git"
+  },
+  "type": "module",
+  "bugs": {
+    "url": "https://github.com/OrhunMahir/game_jam_hackathon/issues"
+  },
+  "homepage": "https://github.com/OrhunMahir/game_jam_hackathon#readme",
+  "dependencies": {
+    "qrcode": "^1.5.4",
+    "three": "^0.170.0"
+  },
+  "devDependencies": {
+    "@gltf-transform/core": "^4.5.1",
+    "@gltf-transform/extensions": "^4.5.1",
+    "@gltf-transform/functions": "^4.5.1",
+    "sharp": "^0.33.5",
+    "vite": "^6.0.7",
+    "wrangler": "^4.162.0"
+  },
+  "private": true
+}
