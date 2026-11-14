@@ -7,15 +7,19 @@ import path from "node:path";
 import sharp from "sharp";
 import { NodeIO, PropertyType } from "@gltf-transform/core";
 import { ALL_EXTENSIONS } from "@gltf-transform/extensions";
-import { dedup, prune, textureCompress } from "@gltf-transform/functions";
+import { dedup, prune, textureCompress, reorder, quantize, meshopt } from "@gltf-transform/functions";
+import { MeshoptEncoder } from "meshoptimizer";
+await MeshoptEncoder.ready;
 
 const RAW = "assets-src/models-raw";
 const OUT = "public/models";
-const io = new NodeIO().registerExtensions(ALL_EXTENSIONS);
+const io = new NodeIO().registerExtensions(ALL_EXTENSIONS).registerDependencies({ "meshopt.encoder": MeshoptEncoder });
 
 for (const f of fs.readdirSync(RAW).filter((f) => f.endsWith(".glb"))) {
-  const doc = await io.read(path.join(RAW, f));
   const name = f.replace(".glb", "");
+  // unrigged character originals are only kept as raw backups
+  if (fs.existsSync(path.join(RAW, `${name}_rigged.glb`))) { fs.rmSync(path.join(OUT, f), { force: true }); continue; }
+  const doc = await io.read(path.join(RAW, f));
   const animOnly = /_(walk|run)$/.test(name);
   if (animOnly) {
     const root = doc.getRoot();
@@ -33,11 +37,14 @@ for (const f of fs.readdirSync(RAW).filter((f) => f.endsWith(".glb"))) {
     for (const t of root.listTextures()) t.dispose();
     await doc.transform(prune({ propertyTypes: [PropertyType.MESH, PropertyType.MATERIAL, PropertyType.TEXTURE, PropertyType.ACCESSOR, PropertyType.SKIN], keepLeaves: true }));
   } else {
-    const size = /_rigged$/.test(name) ? 1024 : 512;
+    const size = /_rigged$/.test(name) ? 640 : 512;
     await doc.transform(
       dedup(),
       textureCompress({ encoder: sharp, targetFormat: "webp", resize: [size, size], quality: 82 }),
       prune({ keepLeaves: true }),
+      reorder({ encoder: MeshoptEncoder }),
+      quantize(),
+      meshopt({ encoder: MeshoptEncoder, level: "medium" }),
     );
   }
   await io.write(path.join(OUT, f), doc);

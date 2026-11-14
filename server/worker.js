@@ -8,6 +8,13 @@ const COUNTDOWN_MS = 3_500;
 const RESULTS_MS = 12_000;
 const TICK_MS = 66;
 
+const AV = { m: ["player", "p_business", "p_grandma", "p_tourist", "p_punk", "p_scientist"], hat: ["none", "cap", "tyrol", "crown", "party", "tophat"], gl: ["none", "sun", "nerd"], br: ["none", "stache"] };
+function cleanAvatar(a) {
+  if (!a || typeof a !== "object") return null;
+  const pickv = (v, list) => (list.includes(v) ? v : list[0]);
+  return { m: pickv(a.m, AV.m), c: typeof a.c === "string" && /^#[0-9a-f]{6}$/i.test(a.c) ? a.c : null, hat: pickv(a.hat, AV.hat), gl: pickv(a.gl, AV.gl), br: pickv(a.br, AV.br) };
+}
+
 export default {
   async fetch(req, env) {
     const url = new URL(req.url);
@@ -68,9 +75,10 @@ export class GameRoom extends DurableObject {
       case "hello":
         p.name = String(m.name || "Gast").slice(0, 16);
         p.host = !!m.host;
+        p.av = cleanAvatar(m.avatar);
         break;
       case "s": // state
-        if (typeof m.x === "number") { p.x = m.x; p.z = m.z; p.ry = m.ry; p.anim = m.a | 0; p.stamps = m.st | 0; }
+        if (typeof m.x === "number") { p.x = m.x; p.z = m.z; p.ry = m.ry; p.anim = m.a | 0; p.stamps = m.st | 0; p.f = m.f | 0; }
         break;
       case "settings":
         if (this.phase === "lobby" || this.phase === "results") {
@@ -170,7 +178,7 @@ export class GameRoom extends DurableObject {
       this.broadcastPhase();
     }
     const ps = [];
-    for (const p of this.players.values()) ps.push([p.id, p.name, p.color, +p.x.toFixed(2), +p.z.toFixed(2), +p.ry.toFixed(2), p.anim, p.stamps, p.finished ? 1 : 0, p.host ? 1 : 0]);
+    for (const p of this.players.values()) ps.push([p.id, p.name, p.color, +p.x.toFixed(2), +p.z.toFixed(2), +p.ry.toFixed(2), p.anim, p.stamps, p.finished ? 1 : 0, p.host ? 1 : 0, p.f | 0, p.av || null]);
     this.broadcast({ t: "snap", now, ps });
   }
 

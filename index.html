@@ -11,6 +11,8 @@
 </head>
 <body>
   <canvas id="c"></canvas>
+  <div id="vignette"></div>
+  <div id="fade" class="hidden"></div>
 
   <!-- Join -->
   <div id="join" class="screen">
@@ -19,6 +21,7 @@
       <h1>STEMPEL<br />RUSH</h1>
       <p class="sub">5 Stempel. 1 Aufenthaltstitel. Die Behörde schließt gleich.</p>
       <input id="name" maxlength="16" placeholder="Dein Name" autocomplete="off" />
+      <button id="avatarBtn" class="wideBtn avatarBtn">🧍 Avatar anpassen</button>
       <button id="joinBtn" class="big">Nummer ziehen &amp; rein</button>
       <button id="soloBtn" class="ghost">Allein üben</button>
       <p class="help">WASD / Pfeile laufen · Leertaste: Vordrängeln<br />Handy: wischen + roter Knopf</p>
@@ -35,6 +38,7 @@
   <div id="center"></div>
   <canvas id="minimap" class="hidden"></canvas>
   <div id="powerHud"></div>
+  <div id="floorPanel"></div>
   <div id="eventTag" class="hidden"></div>
   <button id="dashBtn" class="hidden">DRÄNGELN</button>
   <div id="progress" class="hidden"><div id="progressFill"></div><span id="progressText">Formular ausfüllen…</span></div>
@@ -82,6 +86,19 @@
         <p><b>Laufen:</b> WASD / Pfeiltasten · Handy: irgendwo wischen<br /><b>Vordrängeln:</b> Leertaste · Handy: roter Knopf<br /><b>Stempel:</b> vor dem Schalter stehen bleiben<br /><b>Personal:</b> nicht in den Lichtkegel laufen!<br /><b>Menü:</b> Esc</p>
       </details>
       <button id="leaveBtn" class="ghost">Raum verlassen</button>
+    </div>
+  </div>
+
+  <div id="avatarScreen" class="hidden overlay">
+    <div class="card menuCard avatarCard">
+      <h2>Dein Avatar</h2>
+      <canvas id="avatarPreview"></canvas>
+      <div class="avRow"><button class="avArrow" id="avPrev" aria-label="Vorherige Figur">◀</button><b id="avModel">Student</b><button class="avArrow" id="avNext" aria-label="Nächste Figur">▶</button></div>
+      <div class="avLabel">Kleidung</div><div id="avColors" class="swatches"></div>
+      <div class="avLabel">Hut</div><div id="avHats" class="avChips"></div>
+      <div class="avLabel">Brille</div><div id="avGlasses" class="avChips"></div>
+      <div class="avLabel">Bart</div><div id="avBeards" class="avChips"></div>
+      <button id="avDone" class="big">Fertig</button>
     </div>
   </div>
 

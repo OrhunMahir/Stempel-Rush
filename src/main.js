@@ -1,8 +1,9 @@
 import * as THREE from "three";
 import QRCode from "qrcode";
-import { buildWorld, disposeWorld, patrolPos, moveWithCollision, hasLOS, STATIONS, rng, DEFAULT_SETTINGS } from "./world.js";
+import { buildBuilding, disposeBuilding, patrolPos, moveWithCollision, hasLOS, onPuddle, STATIONS, FLOOR_NAMES, rng, DEFAULT_SETTINGS } from "./world.js";
 import { makeCharacter, textSprite } from "./assets.js";
 import * as audio from "./audio.js";
+import { makeAvatar, loadAvatar, saveAvatar, sanitize, MODELS, COLORS, HATS, GLASSES, BEARDS, Preview } from "./avatar.js";
 import { Particles, addShake, applyShake, stampSlam, flash, banner, alertSprite, coneMesh } from "./effects.js";
 
 // ---------- constants ----------
@@ -45,6 +46,9 @@ const ui = {
   joy: $("joy"), joyNub: $("joyNub"), minimap: $("minimap"), powerHud: $("powerHud"), dashBtn: $("dashBtn"), eventTag: $("eventTag"),
   menuBtn: $("menuBtn"), menu: $("menu"), menuNote: $("menuNote"), resumeBtn: $("resumeBtn"), volMusic: $("volMusic"), volSfx: $("volSfx"),
   customBtn: $("customBtn"), leaveBtn: $("leaveBtn"), custom: $("custom"), customDone: $("customDone"), lobbyCustomBtn: $("lobbyCustomBtn"), settingsSummary: $("settingsSummary"),
+  floorPanel: $("floorPanel"), fade: $("fade"),
+  avatarBtn: $("avatarBtn"), avatarScreen: $("avatarScreen"), avatarPreview: $("avatarPreview"), avPrev: $("avPrev"), avNext: $("avNext"), avModel: $("avModel"),
+  avColors: $("avColors"), avHats: $("avHats"), avGlasses: $("avGlasses"), avBeards: $("avBeards"), avDone: $("avDone"),
   setDuration: $("setDuration"), setClerks: $("setClerks"), setSize: $("setSize"), setGuards: $("setGuards"), setEvents: $("setEvents"), setPowerups: $("setPowerups"), setShove: $("setShove"),
 };
 for (let i = 1; i <= 5; i++) { const d = document.createElement("div"); d.className = "slot"; d.textContent = i; d.title = STATIONS[i]; ui.stamps.appendChild(d); }
@@ -52,8 +56,9 @@ try { ui.name.value = localStorage.getItem("sr_name") || ""; } catch {}
 
 // ---------- three ----------
 const canvas = $("c");
-const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
-renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: !TOUCH, powerPreference: "high-performance" });
+renderer.setPixelRatio(Math.min(devicePixelRatio, TOUCH ? 1.5 : 2));
+renderer.toneMappingExposure = 1.05;
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 renderer.outputColorSpace = THREE.SRGBColorSpace;
@@ -67,7 +72,7 @@ scene.add(hemi);
 const sun = new THREE.DirectionalLight("#fff3d6", 2.0);
 sun.position.set(-12, 30, 14);
 sun.castShadow = true;
-sun.shadow.mapSize.set(2048, 2048);
+sun.shadow.mapSize.set(TOUCH ? 1024 : 2048, TOUCH ? 1024 : 2048);
 Object.assign(sun.shadow.camera, { left: -30, right: 30, top: 24, bottom: -24, near: 1, far: 90 });
 scene.add(sun);
 const playerLight = new THREE.PointLight("#fff1c9", 0, 10, 1.6);
@@ -89,11 +94,13 @@ const beacon = new THREE.Mesh(new THREE.CylinderGeometry(0.9, 0.9, 14, 24, 1, tr
 beacon.visible = false; scene.add(beacon);
 
 // ---------- state ----------
-let world = null, worldKey = null, building = null, paused = false, pauseStart = 0;
+let world = null, bld = null, curF = 0, worldKey = null, building = null, paused = false, pauseStart = 0;
+let fog = []; // per floor: revealed cells (minimap fog of war)
 const me = {
   id: null, name: "", color: "#ff7a1a", char: null, label: null, ring: null, shieldMesh: null,
   pos: new THREE.Vector3(), ry: 0, anim: 0, stamps: [], stun: 0, invuln: 0, finished: false, stampProgress: 0, stampAt: null,
-  dashT: 0, dashCd: 0, boost: 0, shield: 0, shoved: new Set(), dustT: 0,
+  dashT: 0, dashCd: 0, boost: 0, shield: 0, shoved: new Set(), dustT: 0, vel: new THREE.Vector3(), stairCd: 0, slipping: false,
+  avatar: loadAvatar(),
 };
 const remotes = new Map();
 let clerks = [];
@@ -159,12 +166,25 @@ function center(html, ms = 0) {
 }
 function renderStamps() {
   [...ui.stamps.children].forEach((d, i) => d.classList.toggle("on", me.stamps.includes(i + 1)));
-  for (const s of world?.stations ?? []) {
-    const has = me.stamps.includes(s.n);
-    s.holder.visible = !has;
-    s.ring.material.color.set(has ? "#3a3f4a" : "#ffd23f");
+  for (const fl of bld?.floors ?? []) {
+    for (const s of fl.stations) {
+      const has = me.stamps.includes(s.n);
+      s.holder.visible = !has;
+      s.ring.material.color.set(has ? "#3a3f4a" : "#ffd23f");
+    }
+    if (fl.exit) fl.exit.glow.material.opacity = me.stamps.length === 5 ? 0.85 : 0;
   }
-  if (world?.exit) world.exit.glow.material.opacity = me.stamps.length === 5 ? 0.85 : 0;
+  renderFloorPanel();
+}
+function renderFloorPanel() {
+  if (!bld) return;
+  let h = "";
+  for (let f = bld.F - 1; f >= 0; f--) {
+    const nums = Object.entries(bld.stationFloor).filter(([, fl]) => fl === f).map(([n]) => Number(n)).sort();
+    const st = nums.map((n) => `<span class="st${me.stamps.includes(n) ? " done" : ""}">${n}</span>`).join("");
+    h += `<div class="fl${f === curF ? " cur" : ""}"><b>${FLOOR_NAMES[f]}</b>${st}${f === bld.F - 1 ? `<span class="st exit${me.stamps.length === 5 ? " ready" : ""}">🏁</span>` : ""}</div>`;
+  }
+  if (ui.floorPanel._h !== h) { ui.floorPanel.innerHTML = h; ui.floorPanel._h = h; }
 }
 function renderPowerHud() {
   let h = "";
@@ -186,31 +206,63 @@ function renderScores() {
 // ---------- world ----------
 async function ensureWorld(newSeed) {
   const key = newSeed + "|" + JSON.stringify(settings);
-  if (key === worldKey && world) return;
+  if (key === worldKey && bld) return;
   worldKey = key;
-  const job = buildWorld(scene, newSeed, settings);
+  const job = buildBuilding(scene, newSeed, settings);
   building = job;
-  const w = await job;
-  if (building !== job) { disposeWorld(scene, w); return; }
-  disposeWorld(scene, world);
-  world = w;
+  const b = await job;
+  if (building !== job) { disposeBuilding(scene, b); return; }
+  disposeBuilding(scene, bld);
+  bld = b;
+  for (const c of clerks) { scene.remove(c.char.root, c.cone, c.alert, c.q); }
+  clerks = [];
+  resetFog();
+  Object.assign(sun.shadow.camera, { left: -bld.W - 2, right: bld.W + 2, top: bld.H + 2, bottom: -bld.H - 2 });
+  sun.shadow.camera.updateProjectionMatrix();
+  setFloor(0);
+  await spawnClerks();
+  renderStamps();
+  me.pos.copy(bld.floors[0].spawn); // never stay inside a wall of the new floor plan
+}
+
+function resetFog() { fog = bld.floors.map((fl) => ({ cells: new Uint8Array(fl.W * fl.H), canvas: null })); }
+
+function setFloor(f) {
+  curF = f;
+  world = bld.floors[f];
+  bld.floors.forEach((fl, i) => { fl.group.visible = i === f; });
   scene.background.set(world.theme.sky);
   if (scene.fog) scene.fog.color.set(world.theme.sky);
   sun.color.set(world.theme.light);
-  for (const c of clerks) { scene.remove(c.char.root, c.cone, c.alert, c.q); }
-  clerks = [];
-  await spawnClerks();
+  for (const c of clerks) {
+    const on = c.f === f;
+    c.char.root.visible = on; c.cone.visible = on; c.alert.visible = false; c.q.visible = false;
+    if (!on) { c.state = "patrol"; c.seeT = 0; }
+  }
+  for (const r of remotes.values()) applyRemoteVisibility(r);
   buildMinimapBase();
-  renderStamps();
-  me.pos.copy(world.spawn); // never stay inside a wall of the new floor plan
+  renderFloorPanel();
+}
+
+function useStair(s) {
+  me.stairCd = 1.2; me.stampProgress = 0; me.vel.set(0, 0, 0);
+  ui.fade.classList.remove("hidden"); ui.fade.style.animation = "none"; void ui.fade.offsetWidth; ui.fade.style.animation = "";
+  setTimeout(() => ui.fade.classList.add("hidden"), 450);
+  setFloor(s.to);
+  const dest = world.stairs.find((t) => t.r === s.r && t.c === s.c) || world.stairs[0];
+  me.pos.copy(dest ? dest.arrive : world.spawn);
+  camPos.set(me.pos.x, camPos.y, me.pos.z + 9); camLook.copy(me.pos);
+  audio.play("whoosh", { vol: 0.5 });
+  banner(`<b>${FLOOR_NAMES[s.to]}</b>${s.dir === "up" ? "Treppe hoch" : "Treppe runter"}`, 1300);
 }
 
 async function spawnClerks() {
-  const w = world;
-  const made = await Promise.all(w.patrols.map((p) => makeCharacter(p.kind === "guard" ? "guard" : "clerk", "#7a5230", p.kind === "guard" ? 1.95 : 1.8)));
-  if (w !== world) return;
+  const B = bld;
+  const list = B.floors.flatMap((fl) => fl.patrols.map((p) => ({ p, f: fl.f })));
+  const made = await Promise.all(list.map(({ p }) => makeCharacter(p.kind === "guard" ? "guard" : "clerk", "#7a5230", p.kind === "guard" ? 1.95 : 1.8)));
+  if (B !== bld) return;
   made.forEach((ch, i) => {
-    const p = w.patrols[i];
+    const { p, f } = list[i];
     const cfg = AI[p.kind] || AI.clerk;
     ch.setAnim(1);
     scene.add(ch.root);
@@ -219,7 +271,9 @@ async function spawnClerks() {
     const alert = alertSprite("!");
     const q = alertSprite("?");
     scene.add(alert, q);
-    clerks.push({ patrol: p, kind: p.kind, cfg, char: ch, cone, alert, q, pos: new THREE.Vector3(), ry: 0, state: "patrol", pt: 0, chaseT: 0, lostT: 0, stuckT: 0, cooldown: 0, seeT: 0 });
+    const on = f === curF;
+    ch.root.visible = on; cone.visible = on;
+    clerks.push({ f, patrol: p, kind: p.kind, cfg, char: ch, cone, alert, q, pos: new THREE.Vector3(), ry: 0, state: "patrol", pt: 0, chaseT: 0, lostT: 0, stuckT: 0, cooldown: 0, seeT: 0 });
   });
   syncClerkTime();
 }
@@ -228,7 +282,7 @@ function syncClerkTime() {
   for (const c of clerks) { c.pt = t; c.state = "patrol"; c.alert.visible = false; c.q.visible = false; c.seeT = 0; }
 }
 
-// ---------- minimap ----------
+// ---------- minimap (fog of war) ----------
 let mmBase = null, mmScale = 6, mmLast = 0;
 function buildMinimapBase() {
   const { W, H, map } = world;
@@ -236,24 +290,59 @@ function buildMinimapBase() {
   mmBase = document.createElement("canvas");
   mmBase.width = W * mmScale; mmBase.height = H * mmScale;
   const x = mmBase.getContext("2d");
-  x.fillStyle = "rgba(246,240,220,0.18)"; x.fillRect(0, 0, mmBase.width, mmBase.height);
+  x.fillStyle = "rgba(246,240,220,0.22)"; x.fillRect(0, 0, mmBase.width, mmBase.height);
   x.fillStyle = "rgba(20,24,34,0.95)";
   for (let r = 0; r < H; r++) for (let c = 0; c < W; c++) if (map.g[r][c] === "#") x.fillRect(c * mmScale, r * mmScale, mmScale, mmScale);
+  for (const s of world.stairs) { x.fillStyle = s.dir === "up" ? "#4fd1ff" : "#ff9a3c"; x.fillRect(s.c * mmScale + 1, s.r * mmScale + 1, mmScale - 2, mmScale - 2); }
   ui.minimap.width = mmBase.width; ui.minimap.height = mmBase.height;
+  const fg = fog[curF];
+  if (fg && !fg.canvas) {
+    fg.canvas = document.createElement("canvas");
+    fg.canvas.width = mmBase.width; fg.canvas.height = mmBase.height;
+    const fx = fg.canvas.getContext("2d");
+    fx.fillStyle = "#0d1018"; fx.fillRect(0, 0, fg.canvas.width, fg.canvas.height);
+    for (let i = 0; i < fg.cells.length; i++) if (fg.cells[i]) fx.clearRect((i % W) * mmScale, Math.floor(i / W) * mmScale, mmScale, mmScale);
+  }
+}
+const isRevealed = (r, c) => { const fg = fog[curF]; return !fg || fg.cells[r * world.W + c] === 1; };
+function revealAround() {
+  const fg = fog[curF];
+  if (!fg || !fg.canvas) return;
+  const { W, H } = world;
+  const fx = fg.canvas.getContext("2d");
+  const [pr, pc] = world.worldToCell(me.pos.x, me.pos.z);
+  const open = (r, c) => {
+    if (r < 0 || c < 0 || r >= H || c >= W) return;
+    const i = r * W + c;
+    if (fg.cells[i]) return;
+    fg.cells[i] = 1;
+    fx.clearRect(c * mmScale, r * mmScale, mmScale, mmScale);
+  };
+  for (let dr = -3; dr <= 3; dr++) for (let dc = -3; dc <= 3; dc++) if (dr * dr + dc * dc <= 10) open(pr + dr, pc + dc);
+  const rm = world.map.rooms.find((q) => pr >= q.r0 && pr <= q.r1 && pc >= q.c0 && pc <= q.c1);
+  if (rm && !rm._seen?.[curF]) {
+    for (let r = rm.r0 - 1; r <= rm.r1 + 1; r++) for (let c = rm.c0 - 1; c <= rm.c1 + 1; c++) open(r, c);
+  }
 }
 function drawMinimap() {
   if (!mmBase || !world) return;
+  if (me.char && !IS_HOST) revealAround();
   const x = ui.minimap.getContext("2d");
   x.clearRect(0, 0, ui.minimap.width, ui.minimap.height);
   x.drawImage(mmBase, 0, 0);
   const toMM = (v) => [(v.x / 2 + world.W / 2) * mmScale, (v.z / 2 + world.H / 2) * mmScale];
+  const seen = (v) => { const [r, c] = world.worldToCell(v.x, v.z); return isRevealed(r, c); };
   const dot = (v, col, r) => { const [px, py] = toMM(v); x.fillStyle = col; x.beginPath(); x.arc(px, py, r, 0, Math.PI * 2); x.fill(); };
-  for (const s of world.stations) { const [px, py] = toMM(s.pos); x.fillStyle = me.stamps.includes(s.n) ? "#555c6b" : "#ffd23f"; x.fillRect(px - 5, py - 5, 10, 10); x.fillStyle = "#1d2433"; x.font = "bold 9px sans-serif"; x.textAlign = "center"; x.fillText(s.n, px, py + 3); }
-  { const [px, py] = toMM(world.exit.pos); x.fillStyle = me.stamps.length === 5 ? "#3f6" : "#2f6b45"; x.fillRect(px - 6, py - 6, 12, 12); }
-  for (const p of world.powerups) if (serverNow() > p.takenUntil) dot(p.pos, p.type === "coffee" ? "#ff9a3c" : "#4fd1ff", 2.5);
-  for (const c of clerks) dot(c.pos, c.state === "chase" ? "#ff2d4a" : "#c0392b", c.state === "chase" ? 4 : 3);
-  for (const r of remotes.values()) dot(r.pos, r.color, 3.5);
+  for (const s of world.stations) { if (!seen(s.pos) && !seen(s.front)) continue; const [px, py] = toMM(s.pos); x.fillStyle = me.stamps.includes(s.n) ? "#555c6b" : "#ffd23f"; x.fillRect(px - 5, py - 5, 10, 10); x.fillStyle = "#1d2433"; x.font = "bold 9px sans-serif"; x.textAlign = "center"; x.fillText(s.n, px, py + 3); }
+  if (world.exit && (seen(world.exit.pos) || seen(world.exit.front))) { const [px, py] = toMM(world.exit.pos); x.fillStyle = me.stamps.length === 5 ? "#3f6" : "#2f6b45"; x.fillRect(px - 6, py - 6, 12, 12); }
+  for (const p of world.powerups) if (serverNow() > p.takenUntil && seen(p.pos)) dot(p.pos, p.type === "coffee" ? "#ff9a3c" : "#4fd1ff", 2.5);
+  for (const c of clerks) if (c.f === curF && seen(c.pos)) dot(c.pos, c.state === "chase" ? "#ff2d4a" : "#c0392b", c.state === "chase" ? 4 : 3);
+  for (const r of remotes.values()) if (r.f === curF) dot(r.pos, r.color, 3.5);
   if (me.char) { const [px, py] = toMM(me.pos); x.save(); x.translate(px, py); x.rotate(-me.ry + Math.PI); x.fillStyle = "#fff"; x.beginPath(); x.moveTo(0, -6); x.lineTo(4.5, 4.5); x.lineTo(-4.5, 4.5); x.closePath(); x.fill(); x.restore(); }
+  const fg = fog[curF];
+  if (fg?.canvas && (phase === "race" || phase === "countdown") && !IS_HOST) x.drawImage(fg.canvas, 0, 0);
+  x.fillStyle = "rgba(0,0,0,0.6)"; x.fillRect(0, 0, 44, 15);
+  x.fillStyle = "#fff"; x.font = "bold 11px sans-serif"; x.textAlign = "left"; x.fillText(FLOOR_NAMES[curF], 4, 11);
 }
 
 // ---------- characters ----------
@@ -263,25 +352,29 @@ function colorRing(color) {
   return r;
 }
 async function spawnMe() {
-  me.char = await makeCharacter("player", me.color);
+  me.char = await makeAvatar(me.avatar, me.color);
   scene.add(me.char.root);
   me.ring = colorRing(me.color); scene.add(me.ring);
   me.label = textSprite(me.name || "Du", { bg: me.color, scale: 0.8 }); scene.add(me.label);
   me.shieldMesh = new THREE.Mesh(new THREE.SphereGeometry(0.85, 24, 16), new THREE.MeshBasicMaterial({ color: "#4fd1ff", transparent: true, opacity: 0.18, depthWrite: false }));
   me.shieldMesh.visible = false; scene.add(me.shieldMesh);
 }
-function ensureRemote(id, name, color) {
+function ensureRemote(id, name, color, av) {
   if (remotes.has(id)) return remotes.get(id);
-  const r = { id, name, color, pos: new THREE.Vector3(), target: new THREE.Vector3(), ry: 0, tRy: 0, anim: 0, char: null, label: null, ring: colorRing(color), stamps: 0, fresh: true };
+  const r = { id, name, color, f: 0, pos: new THREE.Vector3(), target: new THREE.Vector3(), ry: 0, tRy: 0, anim: 0, char: null, label: null, ring: colorRing(color), stamps: 0, fresh: true };
   remotes.set(id, r);
   scene.add(r.ring);
   r.label = textSprite(name, { bg: color, scale: 0.8 }); scene.add(r.label);
-  makeCharacter("player", color).then((ch) => {
+  makeAvatar(av || { m: "player", c: color }, color).then((ch) => {
     if (!remotes.has(id)) return;
-    r.char = ch; scene.add(ch.root);
-    ch.root.traverse((o) => { if (o.isMesh && o.material) { o.material = o.material.clone(); o.material.color?.lerp(new THREE.Color(color), 0.35); } });
+    r.char = ch; scene.add(ch.root); applyRemoteVisibility(r);
   });
   return r;
+}
+function applyRemoteVisibility(r) {
+  const on = r.f === curF;
+  if (r.char) r.char.root.visible = on;
+  r.label.visible = on; r.ring.visible = on;
 }
 function removeRemote(id) {
   const r = remotes.get(id);
@@ -297,7 +390,7 @@ function connect() {
     const sock = new WebSocket(WS_URL);
     let opened = false;
     const to = setTimeout(() => { if (!opened) { sock.close(); reject(new Error("timeout")); } }, 5000);
-    sock.onopen = () => { opened = true; clearTimeout(to); ws = sock; sock.send(JSON.stringify({ t: "hello", name: me.name, host: IS_HOST })); resolve(); };
+    sock.onopen = () => { opened = true; clearTimeout(to); ws = sock; sock.send(JSON.stringify({ t: "hello", name: me.name, host: IS_HOST, avatar: me.avatar })); resolve(); };
     sock.onerror = () => { if (!opened) { clearTimeout(to); reject(new Error("ws error")); } };
     sock.onclose = () => { if (opened) { ws = null; say("Verbindung verloren – lade neu…", "⚠️", 4000); setTimeout(() => location.reload(), 2500); } };
     sock.onmessage = (ev) => onNet(JSON.parse(ev.data));
@@ -317,12 +410,13 @@ function onNet(m) {
     case "phase": applyPhase(m); break;
     case "snap": {
       const seen = new Set();
-      for (const [id, name, color, x, z, ry, a, st, fin, host] of m.ps) {
+      for (const [id, name, color, x, z, ry, a, st, fin, host, f, av] of m.ps) {
         seen.add(id);
         if (id === me.id || host) continue;
-        const r = ensureRemote(id, name, color);
+        const r = ensureRemote(id, name, color, av);
+        const nf = f | 0;
+        if (nf !== r.f || r.fresh) { r.f = nf; r.pos.set(x, 0, z); r.fresh = false; applyRemoteVisibility(r); }
         r.target.set(x, 0, z); r.tRy = ry; r.anim = a; r.stamps = st; r.finished = !!fin;
-        if (r.fresh) { r.pos.set(x, 0, z); r.fresh = false; }
       }
       for (const id of [...remotes.keys()]) if (!seen.has(id)) removeRemote(id);
       updateLobbyList(m.ps);
@@ -374,10 +468,13 @@ function activeEvent(t) {
 
 function resetMeForRace() {
   me.stamps = []; me.finished = false; me.stun = 0; me.invuln = 0; me.stampProgress = 0; me.boost = 0; me.shield = 0; me.dashCd = 0;
+  setFloor(0);
+  resetFog(); buildMinimapBase();
   const sr = world.spawnRoom;
   const p = world.cellToWorld(sr.rc, sr.cc);
   me.pos.set(p.x + (Math.random() - 0.5) * 3, 0, p.z + (Math.random() - 0.5) * 2);
-  for (const pu of world.powerups) pu.takenUntil = 0;
+  me.vel.set(0, 0, 0);
+  for (const fl of bld.floors) for (const pu of fl.powerups) pu.takenUntil = 0;
   renderStamps();
 }
 
@@ -390,7 +487,7 @@ function onPhaseChange(prev) {
     resetMeForRace(); syncClerkTime();
     lastCount = -1; last30Played = false; eventsFired = new Set();
     audio.play("countdown");
-    banner(`<b>Etage ${world.map.floorNo} · ${escapeHtml(world.theme.name)}</b>Runde ${round || 1} · 5 Stempel, dann zum Aufenthaltstitel`, 3400);
+    banner(`<b>${escapeHtml(bld.name)}</b>Runde ${round || 1} · ${bld.F} Etagen · Aufenthaltstitel im ${FLOOR_NAMES[bld.F - 1]}`, 3400);
   }
   if (phase === "race" && prev !== "race") {
     center("LOS!<small>Hol dir alle 5 Stempel</small>", 1400);
@@ -460,6 +557,7 @@ function updateClerks(dt) {
     c.cooldown = Math.max(0, c.cooldown - dt);
     c.pt += dt * (racing || phase === "lobby" ? mul : 0);
     if (phase === "countdown") c.pt = 0;
+    if (c.f !== curF) continue; // other floors are hidden and not simulated
     const cfg = c.cfg;
     const range = cfg.range * (evKey === "blackout" ? 0.55 : 1);
     if (c.state === "patrol") {
@@ -554,16 +652,26 @@ function onShoved(m) {
   paper.burst(me.pos.clone().setY(1), 16, { speed: 4, up: 4 });
 }
 
+function stairToward(tf) {
+  const dir = tf > curF ? "up" : "down";
+  let best = null, bd = Infinity;
+  for (const st of world.stairs) { if (st.dir !== dir) continue; const d = st.pos.distanceTo(me.pos); if (d < bd) { bd = d; best = st; } }
+  return best ? { pos: best.pos, front: best.pos, stair: true } : null;
+}
 function targetFor() {
-  if (!world) return null;
-  if (me.stamps.length === 5) return world.exit;
+  if (!world || !bld) return null;
+  if (me.stamps.length === 5) return curF === bld.F - 1 ? world.exit : stairToward(bld.F - 1);
   let best = null, bd = Infinity;
   for (const s of world.stations) {
     if (me.stamps.includes(s.n)) continue;
     const d = s.front.distanceTo(me.pos);
     if (d < bd) { bd = d; best = s; }
   }
-  return best;
+  if (best) return best;
+  const need = [1, 2, 3, 4, 5].filter((n) => !me.stamps.includes(n)).map((n) => bld.stationFloor[n]);
+  if (!need.length) return null;
+  const tf = need.sort((a, b) => Math.abs(a - curF) - Math.abs(b - curF))[0];
+  return stairToward(tf);
 }
 
 function updateMe(dt) {
@@ -577,6 +685,7 @@ function updateMe(dt) {
   me.dashCd = Math.max(0, me.dashCd - dt);
   me.boost = Math.max(0, me.boost - dt);
   me.shield = Math.max(0, me.shield - dt);
+  me.stairCd = Math.max(0, me.stairCd - dt);
   ui.dashBtn.classList.toggle("cool", me.dashCd > 0);
 
   const v = frozen || me.stun > 0 ? { x: 0, z: 0, L: 0 } : inputVec();
@@ -587,7 +696,7 @@ function updateMe(dt) {
     dust.burst(me.pos.clone().setY(0.3), 2, { speed: 1, up: 0.5, colors: ["#ffffff", me.color], life: 0.4 });
     if (racing) for (const r of remotes.values()) {
       if (me.shoved.has(r.id) || r.finished) continue;
-      if (settings.shove && r.pos.distanceTo(me.pos) < 1.25) {
+      if (settings.shove && r.f === curF && r.pos.distanceTo(me.pos) < 1.25) {
         me.shoved.add(r.id);
         send({ t: "shove", target: r.id, dx: fx, dz: fz });
         audio.play("bump"); addShake(0.2, 0.2);
@@ -595,10 +704,17 @@ function updateMe(dt) {
       }
     }
     me.anim = 2;
-  } else if (v.L > 0.05) {
+  } else if (v.L > 0.05 || me.slipping) {
     const sp = SPEED * (0.35 + 0.65 * v.L) * (me.boost > 0 ? 1.45 : 1);
-    moveWithCollision(world, me.pos, v.x * sp * dt, v.z * sp * dt);
-    const target = Math.atan2(v.x, v.z);
+    const slip = onPuddle(world, me.pos.x, me.pos.z);
+    if (slip && !me.slipping && racing) say("Huiii! Rutschgefahr!", "⚠️", 1200);
+    me.slipping = slip;
+    v3.set(v.x * sp, 0, v.z * sp);
+    if (slip) { me.vel.lerp(v3, Math.min(1, dt * 1.1)); if (me.vel.length() < 2.5 && me.vel.lengthSq() > 0.01) me.vel.setLength(2.5); }
+    else me.vel.copy(v3);
+    if (!moveWithCollision(world, me.pos, me.vel.x * dt, me.vel.z * dt)) me.vel.multiplyScalar(0.4);
+    if (v.L <= 0.05) { me.anim = 0; me.dustT = 1; }
+    const target = v.L > 0.05 ? Math.atan2(v.x, v.z) : me.ry;
     let d = target - me.ry; d = Math.atan2(Math.sin(d), Math.cos(d));
     me.ry += d * Math.min(1, dt * 14);
     me.anim = v.L > 0.6 ? 2 : 1;
@@ -618,6 +734,11 @@ function updateMe(dt) {
   playerLight.position.set(me.pos.x, 2.2, me.pos.z);
   renderPowerHud();
 
+  // stairs (also usable in the lobby)
+  if (!frozen && me.stairCd <= 0) {
+    for (const st of world.stairs) if (st.pos.distanceTo(me.pos) < 0.85) { useStair(st); return; }
+  }
+
   // guidance
   const tgt = racing && !me.finished ? targetFor() : null;
   if (tgt) {
@@ -625,8 +746,9 @@ function updateMe(dt) {
     v3.subVectors(goal, me.pos); v3.y = 0;
     const d = v3.length();
     arrow.visible = d > 2.6;
-    if (arrow.visible) { v3.normalize(); arrow.position.set(me.pos.x + v3.x * 1.25, 0.08, me.pos.z + v3.z * 1.25); arrow.rotation.y = Math.atan2(v3.x, v3.z) + Math.PI; arrow.material.color.set(me.stamps.length === 5 ? "#3f6" : "#ffd23f"); }
-    beacon.visible = true; beacon.position.set(tgt.pos.x, 7, tgt.pos.z); beacon.material.color.set(me.stamps.length === 5 ? "#3f6" : "#ffd23f");
+    const col = tgt.stair ? "#4fd1ff" : me.stamps.length === 5 ? "#3f6" : "#ffd23f";
+    if (arrow.visible) { v3.normalize(); arrow.position.set(me.pos.x + v3.x * 1.25, 0.08, me.pos.z + v3.z * 1.25); arrow.rotation.y = Math.atan2(v3.x, v3.z) + Math.PI; arrow.material.color.set(col); }
+    beacon.visible = true; beacon.position.set(tgt.pos.x, 7, tgt.pos.z); beacon.material.color.set(col);
   } else { arrow.visible = false; beacon.visible = false; }
 
   if (!racing || me.finished) { ui.progress.classList.add("hidden"); return; }
@@ -669,7 +791,7 @@ function updateMe(dt) {
   } else { me.stampAt = null; me.stampProgress = 0; ui.progress.classList.add("hidden"); }
 
   // exit
-  if (me.stamps.length === 5 && world.exit.front.distanceTo(me.pos) < FRONT_R) {
+  if (me.stamps.length === 5 && world.exit && world.exit.front.distanceTo(me.pos) < FRONT_R) {
     me.finished = true;
     audio.play("win");
     const ms = serverNow() - raceStart;
@@ -758,15 +880,27 @@ function updateCamera(dt) {
 
 // ---------- loop ----------
 const clock = new THREE.Clock();
-let loopErr = 0;
+let loopErr = 0, hostFloorT = 0;
 function loop() {
   requestAnimationFrame(loop);
   try { frame(); } catch (e) { if (loopErr++ < 5) console.error("frame error", e); }
 }
+let pr = renderer.getPixelRatio(), fpsAcc = 0, fpsN = 0, fpsT = 0;
+function adaptResolution(rawDt) {
+  fpsAcc += rawDt; fpsN++;
+  if (fpsAcc < 2) return;
+  const fps = fpsN / fpsAcc; fpsAcc = 0; fpsN = 0;
+  if (document.hidden) return;
+  if (fps < 45 && pr > 1) { pr = Math.max(1, pr - 0.25); renderer.setPixelRatio(pr); resize(); }
+  else if (fps > 58 && pr < Math.min(devicePixelRatio, TOUCH ? 1.5 : 2) && performance.now() - fpsT > 10000) { fpsT = performance.now(); pr = Math.min(pr + 0.25, Math.min(devicePixelRatio, TOUCH ? 1.5 : 2)); renderer.setPixelRatio(pr); resize(); }
+}
 function frame() {
-  const dt = Math.min(clock.getDelta(), 0.05);
+  const raw = clock.getDelta();
+  adaptResolution(raw);
+  const dt = Math.min(raw, 0.05);
   if (world && !paused) {
     if (solo) soloTick();
+    if (IS_HOST && bld && bld.F > 1 && performance.now() - hostFloorT > 7000) { hostFloorT = performance.now(); setFloor((curF + 1) % bld.F); }
     updateEvents(dt);
     updateClerks(dt);
     updateMe(dt);
@@ -783,7 +917,7 @@ function frame() {
     beacon.material.opacity = 0.12 + Math.sin(t * 3) * 0.05;
     if (ws && me.char && performance.now() - lastSend > 66) {
       lastSend = performance.now();
-      send({ t: "s", x: me.pos.x, z: me.pos.z, ry: me.ry, a: me.anim, st: me.stamps.length });
+      send({ t: "s", x: me.pos.x, z: me.pos.z, ry: me.ry, a: me.anim, st: me.stamps.length, f: curF });
     }
     if (performance.now() - mmLast > 66) { mmLast = performance.now(); drawMinimap(); }
   }
@@ -890,5 +1024,38 @@ ui.volMusic.oninput = () => audio.setVolumes({ music: ui.volMusic.value / 100 })
 ui.volSfx.oninput = () => audio.setVolumes({ sfx: ui.volSfx.value / 100 });
 renderSettings();
 
+// ---------- avatar editor ----------
+let preview = null;
+function chipRow(el, list, keyName) {
+  el.innerHTML = list.map(([v, label]) => `<button class="avChip${me.avatar[keyName] === v ? " on" : ""}" data-v="${v}">${label}</button>`).join("");
+  el.onclick = (e) => { const b = e.target.closest("button"); if (!b) return; me.avatar[keyName] = b.dataset.v; renderAvatarUI(); };
+}
+function renderAvatarUI() {
+  me.avatar = sanitize(me.avatar);
+  const mi = MODELS.findIndex((m) => m.id === me.avatar.m);
+  ui.avModel.textContent = `${MODELS[mi].name} (${mi + 1}/${MODELS.length})`;
+  ui.avColors.innerHTML = COLORS.map((c) => `<button class="sw${me.avatar.c === c ? " on" : ""}" data-c="${c || ""}" style="background:${c || "conic-gradient(#ff7a1a,#2fb4ff,#2ecc71,#ffd23f,#ff7a1a)"}" title="${c ? c : "Original"}">${c ? "" : "∅"}</button>`).join("");
+  ui.avColors.onclick = (e) => { const b = e.target.closest("button"); if (!b) return; me.avatar.c = b.dataset.c || null; renderAvatarUI(); };
+  chipRow(ui.avHats, HATS, "hat"); chipRow(ui.avGlasses, GLASSES, "gl"); chipRow(ui.avBeards, BEARDS, "br");
+  preview?.set(me.avatar);
+}
+function openAvatar() {
+  audio.unlock();
+  ui.avatarScreen.classList.remove("hidden");
+  if (!preview) preview = new Preview(ui.avatarPreview);
+  preview.start();
+  renderAvatarUI();
+}
+function closeAvatar() {
+  ui.avatarScreen.classList.add("hidden");
+  preview?.stop();
+  saveAvatar(me.avatar);
+}
+const stepModel = (d) => { const i = MODELS.findIndex((m) => m.id === me.avatar.m); me.avatar.m = MODELS[(i + d + MODELS.length) % MODELS.length].id; renderAvatarUI(); };
+ui.avatarBtn.onclick = openAvatar;
+ui.avDone.onclick = closeAvatar;
+ui.avPrev.onclick = () => stepModel(-1);
+ui.avNext.onclick = () => stepModel(1);
+
 // debug hook for testing
-window.__sr = { camera, renderer, me, get phase() { return phase; }, get clerks() { return clerks; }, remotes, get world() { return world; }, get seed() { return seed; }, activeEvent: () => activeEvent(raceT()), skip: (sec) => { raceStart -= sec * 1000; phaseEndsAt -= sec * 1000; }, schedule: () => eventSchedule() };
+window.__sr = { setFloor: (f) => setFloor(f), get bld() { return bld; }, get curF() { return curF; }, camera, renderer, me, get phase() { return phase; }, get clerks() { return clerks; }, remotes, get world() { return world; }, get seed() { return seed; }, activeEvent: () => activeEvent(raceT()), skip: (sec) => { raceStart -= sec * 1000; phaseEndsAt -= sec * 1000; }, schedule: () => eventSchedule() };
