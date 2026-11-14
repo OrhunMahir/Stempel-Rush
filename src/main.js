@@ -14,6 +14,13 @@ const params = new URLSearchParams(location.search);
 const ROOM = (params.get("room") || "MUC").toUpperCase();
 const IS_HOST = params.has("host");
 if (IS_HOST) document.body.classList.add("host");
+// Room server: same origin when served by our Worker (or wrangler dev), otherwise (itch.io etc.) the Cloudflare Worker.
+const CANONICAL = "stempel-rush.dalliagac.workers.dev";
+const SELF_HOSTED = location.hostname === CANONICAL || location.hostname === "localhost" || location.hostname === "127.0.0.1" || /^\d+\.\d+\.\d+\.\d+$/.test(location.hostname);
+const WS_URL = SELF_HOSTED
+  ? `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws?room=${ROOM}`
+  : `wss://${CANONICAL}/ws?room=${ROOM}`;
+const JOIN_BASE = SELF_HOSTED ? location.origin : `https://${CANONICAL}`;
 
 // ---------- DOM ----------
 const $ = (id) => document.getElementById(id);
@@ -131,7 +138,7 @@ function renderStamps() {
 const fmt = (ms) => { const s = Math.max(0, Math.ceil(ms / 1000)); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`; };
 
 function makeQR() {
-  const url = `${location.origin}/?room=${ROOM}`;
+  const url = `${JOIN_BASE}/?room=${ROOM}`;
   ui.joinUrl.textContent = url.replace(/^https?:\/\//, "");
   QRCode.toCanvas(ui.qr, url, { margin: 1, width: IS_HOST ? 440 : 260 });
 }
@@ -184,8 +191,8 @@ async function spawnClerks() {
 // ---------- networking ----------
 function connect() {
   return new Promise((resolve, reject) => {
-    const proto = location.protocol === "https:" ? "wss" : "ws";
-    const sock = new WebSocket(`${proto}://${location.host}/ws?room=${ROOM}`);
+
+    const sock = new WebSocket(WS_URL);
     let opened = false;
     const to = setTimeout(() => { if (!opened) { sock.close(); reject(new Error("timeout")); } }, 5000);
     sock.onopen = () => { opened = true; clearTimeout(to); ws = sock; sock.send(JSON.stringify({ t: "hello", name: me.name, host: IS_HOST })); resolve(); };

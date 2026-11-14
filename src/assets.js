@@ -7,7 +7,7 @@ const cache = {};
 
 export function loadGLB(name) {
   if (!(name in cache)) {
-    cache[name] = loader.loadAsync(`/models/${name}.glb`).catch(() => null);
+    cache[name] = loader.loadAsync(`./models/${name}.glb`).catch(() => null);
   }
   return cache[name];
 }

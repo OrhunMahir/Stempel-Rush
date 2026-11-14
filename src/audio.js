@@ -25,7 +25,7 @@ async function load(name) {
   if (name in buffers) return buffers[name];
   buffers[name] = (async () => {
     try {
-      const r = await fetch(`/audio/${name}.mp3`);
+      const r = await fetch(`./audio/${name}.mp3`);
       if (!r.ok) return null;
       const ab = await r.arrayBuffer();
       return await ctx.decodeAudioData(ab);

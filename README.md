@@ -13,7 +13,8 @@ Built at Game Jam Munich (14 November 2026).
 
 ## Play
 
-- Live: https://stempel-rush.dalliagac.workers.dev
+- itch.io: https://batudlgc.itch.io/stempel-rush
+- Live (direct, best on phones): https://stempel-rush.dalliagac.workers.dev
 - Same room for everyone: `/?room=MUC` (default)
 - Big screen / projector view with QR code: `/?host=1`
 - Controls: WASD / arrow keys, on phones drag anywhere
@@ -28,6 +29,17 @@ npm run deploy         # build + deploy to Cloudflare
 ```
 
 `npm run dev` runs Vite on :5173 and proxies `/ws` to a running `wrangler dev`.
+
+### itch.io build
+
+The build uses relative paths, so `dist/` works from any subfolder. When the game is not
+served by the Worker (e.g. inside itch.io), it connects to the Worker's `/ws` directly.
+
+```bash
+npm run build && (cd dist && zip -qr ../release/stempel-rush-itch.zip .)
+```
+
+Upload `release/stempel-rush-itch.zip` on the itch.io edit page and tick "played in the browser".
 
 ## Assets
 

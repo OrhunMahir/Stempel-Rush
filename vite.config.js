@@ -5,5 +5,6 @@ export default defineConfig({
     port: 5173,
     proxy: { "/ws": { target: "ws://127.0.0.1:8787", ws: true } },
   },
+  base: "./",
   build: { chunkSizeWarningLimit: 2000 },
 });
