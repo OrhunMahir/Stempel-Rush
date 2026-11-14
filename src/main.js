@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import QRCode from "qrcode";
-import { buildWorld, disposeWorld, patrolPos, moveWithCollision, hasLOS, STATIONS, rng } from "./world.js";
+import { buildWorld, disposeWorld, patrolPos, moveWithCollision, hasLOS, STATIONS, rng, DEFAULT_SETTINGS } from "./world.js";
 import { makeCharacter, textSprite } from "./assets.js";
 import * as audio from "./audio.js";
 import { Particles, addShake, applyShake, stampSlam, flash, banner, alertSprite, coneMesh } from "./effects.js";
@@ -10,11 +10,12 @@ const SPEED = 5.2;
 const STAMP_TIME = 1.1;
 const FRONT_R = 1.7; // distance to the spot in front of a counter
 const HIT_R = 0.95;
-const RACE_MS = 120_000;
+let settings = { ...DEFAULT_SETTINGS };
+const raceMs = () => settings.duration * 1000;
 const DASH_SPEED = 15, DASH_T = 0.2, DASH_CD = 2.5;
 const AI = {
-  clerk: { range: 5.5, angle: (75 * Math.PI) / 180, chase: 4.0 },
-  guard: { range: 7.5, angle: (60 * Math.PI) / 180, chase: 4.7 },
+  clerk: { range: 5.5, angle: (75 * Math.PI) / 180, chase: 3.6, react: 0.45 },
+  guard: { range: 7.0, angle: (60 * Math.PI) / 180, chase: 4.3, react: 0.3 },
 };
 const EVENTS = {
   lunch: { name: "Mittagspause", desc: "Das Personal isst. Freie Bahn!", dur: 9, voice: "ev_lunch" },
@@ -42,6 +43,9 @@ const ui = {
   lobby: $("lobby"), playerList: $("playerList"), startBtn: $("startBtn"), qr: $("qr"), joinUrl: $("joinUrl"), lobbyScores: $("lobbyScores"),
   results: $("results"), resultList: $("resultList"), resultsTitle: $("resultsTitle"), resultsNext: $("resultsNext"),
   joy: $("joy"), joyNub: $("joyNub"), minimap: $("minimap"), powerHud: $("powerHud"), dashBtn: $("dashBtn"), eventTag: $("eventTag"),
+  menuBtn: $("menuBtn"), menu: $("menu"), menuNote: $("menuNote"), resumeBtn: $("resumeBtn"), volMusic: $("volMusic"), volSfx: $("volSfx"),
+  customBtn: $("customBtn"), leaveBtn: $("leaveBtn"), custom: $("custom"), customDone: $("customDone"), lobbyCustomBtn: $("lobbyCustomBtn"), settingsSummary: $("settingsSummary"),
+  setDuration: $("setDuration"), setClerks: $("setClerks"), setSize: $("setSize"), setGuards: $("setGuards"), setEvents: $("setEvents"), setPowerups: $("setPowerups"), setShove: $("setShove"),
 };
 for (let i = 1; i <= 5; i++) { const d = document.createElement("div"); d.className = "slot"; d.textContent = i; d.title = STATIONS[i]; ui.stamps.appendChild(d); }
 try { ui.name.value = localStorage.getItem("sr_name") || ""; } catch {}
@@ -85,7 +89,7 @@ const beacon = new THREE.Mesh(new THREE.CylinderGeometry(0.9, 0.9, 14, 24, 1, tr
 beacon.visible = false; scene.add(beacon);
 
 // ---------- state ----------
-let world = null, worldSeed = null, building = null;
+let world = null, worldKey = null, building = null, paused = false, pauseStart = 0;
 const me = {
   id: null, name: "", color: "#ff7a1a", char: null, label: null, ring: null, shieldMesh: null,
   pos: new THREE.Vector3(), ry: 0, anim: 0, stamps: [], stun: 0, invuln: 0, finished: false, stampProgress: 0, stampAt: null,
@@ -101,7 +105,8 @@ const raceT = () => (serverNow() - raceStart) / 1000;
 // ---------- input ----------
 const keys = new Set();
 addEventListener("keydown", (e) => {
-  if (document.activeElement === ui.name) return;
+  if (e.key === "Escape") { e.preventDefault(); if (!ui.custom.classList.contains("hidden")) closeCustom(); else if (me.char || IS_HOST) toggleMenu(); return; }
+  if (document.activeElement === ui.name || menuOpen()) return;
   const k = e.key.toLowerCase();
   keys.add(k);
   if (k === " ") { e.preventDefault(); tryDash(); }
@@ -180,9 +185,10 @@ function renderScores() {
 
 // ---------- world ----------
 async function ensureWorld(newSeed) {
-  if (newSeed === worldSeed && world) return;
-  worldSeed = newSeed;
-  const job = buildWorld(scene, newSeed);
+  const key = newSeed + "|" + JSON.stringify(settings);
+  if (key === worldKey && world) return;
+  worldKey = key;
+  const job = buildWorld(scene, newSeed, settings);
   building = job;
   const w = await job;
   if (building !== job) { disposeWorld(scene, w); return; }
@@ -191,12 +197,12 @@ async function ensureWorld(newSeed) {
   scene.background.set(world.theme.sky);
   if (scene.fog) scene.fog.color.set(world.theme.sky);
   sun.color.set(world.theme.light);
-  for (const c of clerks) { scene.remove(c.char.root, c.cone, c.alert); }
+  for (const c of clerks) { scene.remove(c.char.root, c.cone, c.alert, c.q); }
   clerks = [];
   await spawnClerks();
   buildMinimapBase();
   renderStamps();
-  if (!me.char) me.pos.copy(world.spawn);
+  me.pos.copy(world.spawn); // never stay inside a wall of the new floor plan
 }
 
 async function spawnClerks() {
@@ -210,15 +216,16 @@ async function spawnClerks() {
     scene.add(ch.root);
     const cone = coneMesh(cfg.range, cfg.angle);
     scene.add(cone);
-    const alert = alertSprite();
-    scene.add(alert);
-    clerks.push({ patrol: p, kind: p.kind, cfg, char: ch, cone, alert, pos: new THREE.Vector3(), ry: 0, state: "patrol", pt: 0, chaseT: 0, lostT: 0, stuckT: 0, cooldown: 0 });
+    const alert = alertSprite("!");
+    const q = alertSprite("?");
+    scene.add(alert, q);
+    clerks.push({ patrol: p, kind: p.kind, cfg, char: ch, cone, alert, q, pos: new THREE.Vector3(), ry: 0, state: "patrol", pt: 0, chaseT: 0, lostT: 0, stuckT: 0, cooldown: 0, seeT: 0 });
   });
   syncClerkTime();
 }
 function syncClerkTime() {
   const t = phase === "race" || phase === "countdown" ? Math.max(0, raceT()) : serverNow() / 1000 % 10000;
-  for (const c of clerks) { c.pt = t; c.state = "patrol"; c.alert.visible = false; }
+  for (const c of clerks) { c.pt = t; c.state = "patrol"; c.alert.visible = false; c.q.visible = false; c.seeT = 0; }
 }
 
 // ---------- minimap ----------
@@ -339,6 +346,7 @@ async function applyPhase(m) {
   phase = m.phase; raceStart = m.raceStart; phaseEndsAt = m.phaseEndsAt; results = m.results || []; scores = m.scores || scores; round = m.round || round;
   if (m.now) serverOffset = m.now - Date.now();
   if (m.seed && m.seed !== seed) seed = m.seed;
+  if (m.settings) { settings = { ...DEFAULT_SETTINGS, ...m.settings }; renderSettings(); }
   await ensureWorld(seed);
   onPhaseChange(prev);
   renderScores();
@@ -353,6 +361,7 @@ function updateLobbyList(ps) {
 
 // ---------- phases ----------
 function eventSchedule() {
+  if (!settings.events) return [];
   const R = rng((seed ^ 0x51ed) >>> 0);
   const ks = Object.keys(EVENTS);
   for (let i = ks.length - 1; i > 0; i--) { const j = Math.floor(R() * (i + 1)); [ks[i], ks[j]] = [ks[j], ks[i]]; }
@@ -411,7 +420,7 @@ async function soloStart() {
 }
 function soloTick() {
   const now = serverNow();
-  if (phase === "countdown" && now >= raceStart) { const p = phase; phase = "race"; phaseEndsAt = raceStart + RACE_MS; onPhaseChange(p); }
+  if (phase === "countdown" && now >= raceStart) { const p = phase; phase = "race"; phaseEndsAt = raceStart + raceMs(); onPhaseChange(p); }
   else if (phase === "race" && now >= phaseEndsAt) { phase = "results"; results = [{ id: me.id, name: me.name, color: me.color, ms: 0, stamps: me.stamps.length }]; phaseEndsAt = now + 6000; onPhaseChange("race"); }
   else if (phase === "results" && now >= phaseEndsAt) { soloStart(); }
 }
@@ -457,23 +466,27 @@ function updateClerks(dt) {
       patrolPos(c.patrol, c.pt, tmp);
       c.pos.copy(tmp.pos); c.ry = tmp.ry;
     }
-    // vision
+    // vision: must stay in the cone (with line of sight) for a short reaction time
+    let sees = false;
     if (canSee && evKey !== "lunch" && c.state !== "chase" && c.cooldown <= 0 && me.invuln <= 0) {
       v3.subVectors(me.pos, c.pos); v3.y = 0;
       const d = v3.length();
       if (d < range) {
         const fx = Math.sin(c.ry), fz = Math.cos(c.ry);
         const cos = (fx * v3.x + fz * v3.z) / (d || 1);
-        if (cos > Math.cos(cfg.angle / 2) && hasLOS(world, c.pos, me.pos)) {
-          c.state = "chase"; c.chaseT = 0; c.lostT = 0; c.stuckT = 0;
-          c.alert.visible = true;
-          if (spotCd <= 0) {
-            spotCd = 2.2;
-            const li = Math.floor(Math.random() * audio.LINES.spot.length);
-            audio.play("alert", { vol: 0.7 }); audio.play(`spot_${li}`);
-            say(audio.LINES.spot[li], c.kind === "guard" ? "👮" : "👔", 1600);
-          }
-        }
+        sees = cos > Math.cos(cfg.angle / 2) && hasLOS(world, c.pos, me.pos);
+      }
+    }
+    c.seeT = sees ? c.seeT + dt : Math.max(0, c.seeT - dt * 1.5);
+    c.q.visible = c.seeT > 0 && c.state !== "chase";
+    if (sees && c.seeT >= cfg.react) {
+      c.state = "chase"; c.chaseT = 0; c.lostT = 0; c.stuckT = 0; c.seeT = 0; c.q.visible = false;
+      c.alert.visible = true;
+      if (spotCd <= 0) {
+        spotCd = 2.2;
+        const li = Math.floor(Math.random() * audio.LINES.spot.length);
+        audio.play("alert", { vol: 0.7 }); audio.play(`spot_${li}`);
+        say(audio.LINES.spot[li], c.kind === "guard" ? "👮" : "👔", 1600);
       }
     }
     if (c.state === "chase") {
@@ -489,7 +502,7 @@ function updateClerks(dt) {
         c.chaseT += dt;
         c.stuckT = before.distanceTo(c.pos) < spd * 0.3 ? c.stuckT + dt : 0;
         c.lostT = d > range * 1.6 || !hasLOS(world, c.pos, me.pos) ? c.lostT + dt : 0;
-        if (c.lostT > 1.4 || c.chaseT > 7 || c.stuckT > 0.6) { c.state = "return"; c.cooldown = 1.5; }
+        if (c.lostT > 1.0 || c.chaseT > 6 || c.stuckT > 0.6) { c.state = "return"; c.cooldown = 1.5; }
       }
     }
     if (c.state === "return") {
@@ -521,6 +534,7 @@ function updateClerks(dt) {
     c.cone.material.color.set(c.state === "chase" ? "#ff2d4a" : c.kind === "guard" ? "#ff9a3c" : "#ffd23f");
     c.cone.material.opacity = c.state === "chase" ? 0.28 : 0.16;
     c.alert.position.set(c.pos.x, 2.5 + Math.sin(performance.now() / 120) * 0.08, c.pos.z);
+    c.q.position.set(c.pos.x, 2.5, c.pos.z);
   }
 }
 
@@ -573,7 +587,7 @@ function updateMe(dt) {
     dust.burst(me.pos.clone().setY(0.3), 2, { speed: 1, up: 0.5, colors: ["#ffffff", me.color], life: 0.4 });
     if (racing) for (const r of remotes.values()) {
       if (me.shoved.has(r.id) || r.finished) continue;
-      if (r.pos.distanceTo(me.pos) < 1.25) {
+      if (settings.shove && r.pos.distanceTo(me.pos) < 1.25) {
         me.shoved.add(r.id);
         send({ t: "shove", target: r.id, dx: fx, dz: fz });
         audio.play("bump"); addShake(0.2, 0.2);
@@ -715,7 +729,7 @@ function updateHud() {
   if (phase === "countdown") {
     const n = Math.ceil((raceStart - now) / 1000);
     if (n !== lastCount && n > 0) { lastCount = n; center(`${n}<small>Behörde öffnet…</small>`); audio.play("tick"); }
-    ui.timer.textContent = fmt(RACE_MS);
+    ui.timer.textContent = fmt(raceMs());
   } else if (phase === "race") {
     const left = phaseEndsAt - now;
     ui.timer.textContent = fmt(left);
@@ -751,7 +765,7 @@ function loop() {
 }
 function frame() {
   const dt = Math.min(clock.getDelta(), 0.05);
-  if (world) {
+  if (world && !paused) {
     if (solo) soloTick();
     updateEvents(dt);
     updateClerks(dt);
@@ -808,6 +822,7 @@ async function startGame(isSolo) {
   ui.hud.classList.remove("hidden");
   ui.minimap.classList.remove("hidden");
   if (TOUCH) ui.dashBtn.classList.remove("hidden");
+  ui.menuBtn.classList.remove("hidden");
   while (!world) await new Promise((r) => setTimeout(r, 100));
   await spawnMe();
   me.pos.copy(world.spawn);
@@ -823,6 +838,57 @@ ui.joinBtn.onclick = () => startGame(false);
 ui.soloBtn.onclick = () => startGame(true);
 ui.name.addEventListener("keydown", (e) => { if (e.key === "Enter") startGame(false); });
 ui.startBtn.onclick = () => { audio.unlock(); send({ t: "start" }); };
+
+// ---------- pause menu & custom game ----------
+const menuOpen = () => !ui.menu.classList.contains("hidden") || !ui.custom.classList.contains("hidden");
+function toggleMenu(force) {
+  const open = force ?? ui.menu.classList.contains("hidden");
+  ui.menu.classList.toggle("hidden", !open);
+  keys.clear();
+  if (open) {
+    const v = audio.getVolumes();
+    ui.volMusic.value = Math.round(v.music * 100); ui.volSfx.value = Math.round(v.sfx * 100);
+    const canPause = solo && (phase === "race" || phase === "countdown");
+    ui.menuNote.textContent = solo ? "Spiel pausiert." : "Online-Runde läuft weiter!";
+    ui.customBtn.classList.toggle("hidden", !(solo || phase === "lobby" || phase === "results"));
+    if (canPause && !paused) { paused = true; pauseStart = Date.now(); }
+  } else if (paused) {
+    const shift = Date.now() - pauseStart;
+    raceStart += shift; phaseEndsAt += shift;
+    paused = false;
+  }
+}
+function renderSettings() {
+  ui.setDuration.value = String(settings.duration); ui.setClerks.value = settings.clerks; ui.setSize.value = settings.size;
+  ui.setGuards.checked = settings.guards; ui.setEvents.checked = settings.events; ui.setPowerups.checked = settings.powerups; ui.setShove.checked = settings.shove;
+  const lbl = { few: "wenig", normal: "normal", many: "viel" }[settings.clerks];
+  const size = { small: "klein", normal: "normal", large: "groß" }[settings.size];
+  const off = [!settings.guards && "ohne Wachmann", !settings.events && "ohne Ereignisse", !settings.powerups && "ohne Power-ups", !settings.shove && "ohne Drängeln"].filter(Boolean);
+  ui.settingsSummary.textContent = `${fmt(settings.duration * 1000)} · Personal ${lbl} · Behörde ${size}${off.length ? " · " + off.join(", ") : ""}`;
+}
+function readSettings() {
+  return {
+    duration: Number(ui.setDuration.value), clerks: ui.setClerks.value, size: ui.setSize.value,
+    guards: ui.setGuards.checked, events: ui.setEvents.checked, powerups: ui.setPowerups.checked, shove: ui.setShove.checked,
+  };
+}
+function openCustom() { renderSettings(); ui.menu.classList.add("hidden"); ui.custom.classList.remove("hidden"); }
+function closeCustom() {
+  ui.custom.classList.add("hidden");
+  const next = readSettings();
+  if (solo) { settings = { ...settings, ...next }; renderSettings(); }
+  else send({ t: "settings", settings: next });
+  if (paused) toggleMenu(true);
+}
+ui.menuBtn.onclick = () => { audio.unlock(); toggleMenu(); };
+ui.resumeBtn.onclick = () => toggleMenu(false);
+ui.leaveBtn.onclick = () => location.reload();
+ui.customBtn.onclick = openCustom;
+ui.lobbyCustomBtn.onclick = openCustom;
+ui.customDone.onclick = closeCustom;
+ui.volMusic.oninput = () => audio.setVolumes({ music: ui.volMusic.value / 100 });
+ui.volSfx.oninput = () => audio.setVolumes({ sfx: ui.volSfx.value / 100 });
+renderSettings();
 
 // debug hook for testing
 window.__sr = { camera, renderer, me, get phase() { return phase; }, get clerks() { return clerks; }, remotes, get world() { return world; }, get seed() { return seed; }, activeEvent: () => activeEvent(raceT()), skip: (sec) => { raceStart -= sec * 1000; phaseEndsAt -= sec * 1000; }, schedule: () => eventSchedule() };

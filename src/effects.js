@@ -100,14 +100,14 @@ export function banner(html, ms = 2600, cls = "") {
   setTimeout(() => el.remove(), ms);
 }
 
-// "!" above a clerk
-export function alertSprite() {
+// "!" (or "?") above a clerk
+export function alertSprite(ch = "!") {
   const c = document.createElement("canvas");
   c.width = c.height = 128;
   const x = c.getContext("2d");
-  x.fillStyle = "#ffd23f"; x.beginPath(); x.arc(64, 64, 56, 0, Math.PI * 2); x.fill();
+  x.fillStyle = ch === "!" ? "#ffd23f" : "#ffffff"; x.beginPath(); x.arc(64, 64, 56, 0, Math.PI * 2); x.fill();
   x.lineWidth = 8; x.strokeStyle = "#1d2433"; x.stroke();
-  x.fillStyle = "#d7263d"; x.font = "bold 92px sans-serif"; x.textAlign = "center"; x.textBaseline = "middle"; x.fillText("!", 64, 70);
+  x.fillStyle = ch === "!" ? "#d7263d" : "#1d2433"; x.font = "bold 92px sans-serif"; x.textAlign = "center"; x.textBaseline = "middle"; x.fillText(ch, 64, 70);
   const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace;
   const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: t, depthTest: false, transparent: true }));
   s.scale.set(0.7, 0.7, 1); s.renderOrder = 11; s.visible = false;
@@ -116,8 +116,9 @@ export function alertSprite() {
 
 // Vision cone mesh (flat sector on the floor)
 export function coneMesh(range, angle) {
+  // Sector centred on +Z (the facing direction used by atan2(x, z) everywhere in the game).
   const geo = new THREE.CircleGeometry(range, 24, Math.PI / 2 - angle / 2, angle);
-  geo.rotateX(-Math.PI / 2);
+  geo.rotateX(Math.PI / 2);
   const mat = new THREE.MeshBasicMaterial({ color: "#ffd23f", transparent: true, opacity: 0.18, depthWrite: false, side: THREE.DoubleSide });
   const m = new THREE.Mesh(geo, mat);
   m.position.y = 0.04;

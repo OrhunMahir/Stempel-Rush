@@ -45,7 +45,11 @@
       <div class="lobbyTitle">Wartebereich</div>
       <div id="playerList"></div>
       <div id="lobbyScores" class="scoreLine"></div>
-      <button id="startBtn" class="big">Behörde öffnen ▶</button>
+      <div class="lobbyBtns">
+        <button id="startBtn" class="big">Behörde öffnen ▶</button>
+        <button id="lobbyCustomBtn" class="sideBtn" aria-label="Spiel anpassen">⚙️</button>
+      </div>
+      <div id="settingsSummary" class="scoreLine"></div>
     </div>
     <div id="qrBox">
       <canvas id="qr"></canvas>
@@ -63,6 +67,38 @@
   </div>
 
   <div id="joy" class="hidden"><div id="joyNub"></div></div>
+  <button id="menuBtn" class="hidden" aria-label="Menü">☰</button>
+
+  <!-- Pause / settings -->
+  <div id="menu" class="hidden overlay">
+    <div class="card menuCard">
+      <h2>Pause</h2>
+      <p id="menuNote" class="scoreLine"></p>
+      <button id="resumeBtn" class="big">Weiter</button>
+      <div class="menuRow"><label for="volMusic">Musik</label><input type="range" id="volMusic" min="0" max="100" /></div>
+      <div class="menuRow"><label for="volSfx">Effekte &amp; Stimmen</label><input type="range" id="volSfx" min="0" max="100" /></div>
+      <button id="customBtn" class="wideBtn">⚙️ Spiel anpassen</button>
+      <details class="controls"><summary>Steuerung</summary>
+        <p><b>Laufen:</b> WASD / Pfeiltasten · Handy: irgendwo wischen<br /><b>Vordrängeln:</b> Leertaste · Handy: roter Knopf<br /><b>Stempel:</b> vor dem Schalter stehen bleiben<br /><b>Personal:</b> nicht in den Lichtkegel laufen!<br /><b>Menü:</b> Esc</p>
+      </details>
+      <button id="leaveBtn" class="ghost">Raum verlassen</button>
+    </div>
+  </div>
+
+  <div id="custom" class="hidden overlay">
+    <div class="card menuCard">
+      <h2>Spiel anpassen</h2>
+      <div class="menuRow"><label for="setDuration">Rundenzeit</label><select id="setDuration"><option value="90">1:30</option><option value="120">2:00</option><option value="180">3:00</option></select></div>
+      <div class="menuRow"><label for="setClerks">Personal</label><select id="setClerks"><option value="few">Wenig</option><option value="normal">Normal</option><option value="many">Viel</option></select></div>
+      <div class="menuRow"><label for="setSize">Behördengröße</label><select id="setSize"><option value="small">Klein</option><option value="normal">Normal</option><option value="large">Groß</option></select></div>
+      <label class="toggle"><input type="checkbox" id="setGuards" /> Wachmann</label>
+      <label class="toggle"><input type="checkbox" id="setEvents" /> Ereignisse (Mittagspause, Stromausfall …)</label>
+      <label class="toggle"><input type="checkbox" id="setPowerups" /> Kaffee &amp; Termin-Bestätigung</label>
+      <label class="toggle"><input type="checkbox" id="setShove" /> Vordrängeln (Spieler schubsen)</label>
+      <p id="customNote" class="scoreLine">Gilt für alle im Raum, ab der nächsten Runde.</p>
+      <button id="customDone" class="big">Fertig</button>
+    </div>
+  </div>
   <script type="module" src="./src/main.js"></script>
 </body>
 </html>

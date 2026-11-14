@@ -2,7 +2,7 @@
 import { DurableObject } from "cloudflare:workers";
 
 const COLORS = ["#ff7a1a", "#2fb4ff", "#9b5cff", "#2ecc71", "#ff4f7b", "#ffd23f", "#00d1b2", "#c0c0c0"];
-const RACE_MS = 120_000;
+const DEFAULT_SETTINGS = { duration: 120, clerks: "normal", guards: true, events: true, powerups: true, shove: true, size: "normal" };
 const POINTS = [5, 3, 2];
 const COUNTDOWN_MS = 3_500;
 const RESULTS_MS = 12_000;
@@ -33,6 +33,7 @@ export class GameRoom extends DurableObject {
     this.timer = null;
     this.nextId = 1;
     this.round = 0;
+    this.settings = { ...DEFAULT_SETTINGS };
     this.scores = new Map(); // name -> points
   }
 
@@ -55,7 +56,7 @@ export class GameRoom extends DurableObject {
     server.addEventListener("close", bye);
     server.addEventListener("error", bye);
 
-    this.send(p, { t: "welcome", id, color, phase: this.phase, phaseEndsAt: this.phaseEndsAt, raceStart: this.raceStart, seed: this.seed, round: this.round, now: Date.now(), results: this.results, scores: this.scoreList() });
+    this.send(p, { t: "welcome", id, color, phase: this.phase, phaseEndsAt: this.phaseEndsAt, raceStart: this.raceStart, seed: this.seed, round: this.round, settings: this.settings, now: Date.now(), results: this.results, scores: this.scoreList() });
     this.ensureTimer();
     return new Response(null, { status: 101, webSocket: client });
   }
@@ -71,6 +72,17 @@ export class GameRoom extends DurableObject {
       case "s": // state
         if (typeof m.x === "number") { p.x = m.x; p.z = m.z; p.ry = m.ry; p.anim = m.a | 0; p.stamps = m.st | 0; }
         break;
+      case "settings":
+        if (this.phase === "lobby" || this.phase === "results") {
+          const v = m.settings || {};
+          const st = this.settings;
+          if ([90, 120, 180].includes(v.duration)) st.duration = v.duration;
+          if (["few", "normal", "many"].includes(v.clerks)) st.clerks = v.clerks;
+          if (["small", "normal", "large"].includes(v.size)) st.size = v.size;
+          for (const k of ["guards", "events", "powerups", "shove"]) if (typeof v[k] === "boolean") st[k] = v[k];
+          this.broadcastPhase();
+        }
+        break;
       case "start":
         if (this.phase === "lobby" || this.phase === "results") this.startCountdown();
         break;
@@ -83,7 +95,7 @@ export class GameRoom extends DurableObject {
         break;
       case "shove": {
         const target = this.players.get(String(m.target));
-        if (target && this.phase === "race") this.send(target, { t: "shoved", by: p.name, dx: +m.dx || 0, dz: +m.dz || 0 });
+        if (target && this.phase === "race" && this.settings.shove) this.send(target, { t: "shoved", by: p.name, dx: +m.dx || 0, dz: +m.dz || 0 });
         this.broadcast({ t: "fxshove", id: p.id, target: String(m.target) });
         break;
       }
@@ -136,6 +148,7 @@ export class GameRoom extends DurableObject {
     this.phase = "lobby";
     this.results = [];
     this.scores.clear();
+    this.settings = { ...DEFAULT_SETTINGS };
     if (this.timer) { clearInterval(this.timer); this.timer = null; }
   }
 
@@ -148,7 +161,7 @@ export class GameRoom extends DurableObject {
     const now = Date.now();
     if (this.phase === "countdown" && now >= this.raceStart) {
       this.phase = "race";
-      this.phaseEndsAt = this.raceStart + RACE_MS;
+      this.phaseEndsAt = this.raceStart + this.settings.duration * 1000;
       this.broadcastPhase();
     } else if (this.phase === "race" && now >= this.phaseEndsAt) {
       this.endRace();
@@ -162,7 +175,7 @@ export class GameRoom extends DurableObject {
   }
 
   broadcastPhase() {
-    this.broadcast({ t: "phase", phase: this.phase, phaseEndsAt: this.phaseEndsAt, raceStart: this.raceStart, seed: this.seed, round: this.round, now: Date.now(), results: this.results, scores: this.scoreList() });
+    this.broadcast({ t: "phase", phase: this.phase, phaseEndsAt: this.phaseEndsAt, raceStart: this.raceStart, seed: this.seed, round: this.round, settings: this.settings, now: Date.now(), results: this.results, scores: this.scoreList() });
   }
 
   scoreList() {

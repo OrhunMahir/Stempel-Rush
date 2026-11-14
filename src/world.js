@@ -22,13 +22,12 @@ export const THEMES = [
 
 const POSTERS = ["Bitte Nummer ziehen", "Ruhe bitte!", "Formular A38", "Rauchen verboten", "Wartezeit: 4 Std.", "Kein Zutritt", "Antrag? Schalter 7", "Heute geschlossen*", "Bitte warten", "Termin = Pflicht", "Kopien: 50 Cent", "Sprechzeiten: Di 9-9:15"];
 
-const LAYOUTS = [
-  { rw: 3, rh: 3, iw: 6, ih: 4 },
-  { rw: 4, rh: 3, iw: 5, ih: 4 },
-  { rw: 3, rh: 3, iw: 7, ih: 5 },
-  { rw: 4, rh: 3, iw: 6, ih: 4 },
-  { rw: 3, rh: 4, iw: 6, ih: 4 },
-];
+export const DEFAULT_SETTINGS = { duration: 120, clerks: "normal", guards: true, events: true, powerups: true, shove: true, size: "normal" };
+const LAYOUTS = {
+  small: [{ rw: 3, rh: 3, iw: 5, ih: 4 }, { rw: 3, rh: 3, iw: 6, ih: 4 }],
+  normal: [{ rw: 3, rh: 3, iw: 6, ih: 4 }, { rw: 4, rh: 3, iw: 5, ih: 4 }, { rw: 3, rh: 3, iw: 7, ih: 5 }, { rw: 4, rh: 3, iw: 6, ih: 4 }, { rw: 3, rh: 4, iw: 6, ih: 4 }],
+  large: [{ rw: 4, rh: 4, iw: 6, ih: 4 }, { rw: 5, rh: 3, iw: 6, ih: 4 }, { rw: 4, rh: 4, iw: 5, ih: 5 }],
+};
 
 const DECOR_TYPES = ["plant", "cabinet", "cooler", "printer", "files", "extinguisher", "vending", "chairs", "coffeemachine"];
 
@@ -45,9 +44,10 @@ const pick = (R, arr) => arr[Math.floor(R() * arr.length)];
 function shuffle(R, arr) { for (let i = arr.length - 1; i > 0; i--) { const j = Math.floor(R() * (i + 1)); [arr[i], arr[j]] = [arr[j], arr[i]]; } return arr; }
 
 // ---------- procedural floor plan ----------
-export function generateMap(seed) {
+export function generateMap(seed, settings = DEFAULT_SETTINGS) {
+  const S = { ...DEFAULT_SETTINGS, ...settings };
   const R = rng(seed);
-  const L = pick(R, LAYOUTS);
+  const L = pick(R, LAYOUTS[S.size] || LAYOUTS.normal);
   const { rw, rh, iw, ih } = L;
   const W = rw * (iw + 1) + 1, H = rh * (ih + 1) + 1;
   const g = Array.from({ length: H }, () => Array(W).fill("#"));
@@ -165,32 +165,56 @@ export function generateMap(seed) {
   };
   if (!reachable(true)) decor = decor.filter((d) => d.type === "plant" && false);
 
-  // patrols
+  // patrols: some guard a counter room, others roam through doors between rooms
+  const doorPoint = (a, b) => {
+    if (a.j === b.j) return [a.rc, b.i > a.i ? a.c1 + 1 : a.c0 - 1];
+    return [b.j > a.j ? a.r1 + 1 : a.r0 - 1, a.cc];
+  };
+  const roamPath = (start, len) => {
+    const path = [start];
+    let cur = start;
+    for (let k = 0; k < len; k++) {
+      const opts = cur.nb.map((id) => rooms[id]).filter((r) => r !== spawnRoom && r !== path[path.length - 2]);
+      if (!opts.length) break;
+      cur = pick(R, opts); path.push(cur);
+    }
+    if (path.length < 2) return null;
+    const fwd = [];
+    for (let k = 0; k < path.length; k++) {
+      fwd.push([path[k].rc, path[k].cc]);
+      if (k + 1 < path.length) fwd.push(doorPoint(path[k], path[k + 1]));
+    }
+    const back = fwd.slice(1, -1).reverse();
+    return [...fwd, ...back];
+  };
   const patrols = [];
-  const patrolRooms = shuffle(R, rooms.filter((r) => r !== spawnRoom));
-  const nClerks = Math.min(patrolRooms.length, 4 + Math.floor(R() * 2));
+  const counts = { few: [2, 3], normal: [4, 5], many: [7, 8] }[S.clerks] || [4, 5];
+  const nClerks = counts[0] + Math.floor(R() * (counts[1] - counts[0] + 1));
+  const nonSpawn = rooms.filter((r) => r !== spawnRoom);
+  const guardRooms = shuffle(R, [...stationRooms, exitRoom]);
   for (let k = 0; k < nClerks; k++) {
-    const rm = patrolRooms[k];
-    if (rm.c1 - rm.c0 < 2 || rm.r1 - rm.r0 < 2) continue;
-    const pts = [[rm.r0 + 1, rm.c0 + 1], [rm.r0 + 1, rm.c1 - 1], [rm.r1 - 1, rm.c1 - 1], [rm.r1 - 1, rm.c0 + 1]];
-    if (R() < 0.5) pts.reverse();
-    patrols.push({ pts, speed: 1.7 + R() * 0.7, offset: R() * 30, kind: "clerk" });
+    const roam = R() < 0.55;
+    let pts = null;
+    if (roam) pts = roamPath(pick(R, nonSpawn), 2 + Math.floor(R() * 3));
+    if (!pts) {
+      const rm = guardRooms[k % guardRooms.length];
+      if (rm.c1 - rm.c0 < 2 || rm.r1 - rm.r0 < 2) continue;
+      pts = [[rm.r0 + 1, rm.c0 + 1], [rm.r0 + 1, rm.c1 - 1], [rm.r1 - 1, rm.c1 - 1], [rm.r1 - 1, rm.c0 + 1]];
+      if (R() < 0.5) pts.reverse();
+    }
+    patrols.push({ pts, speed: 1.6 + R() * 0.8, offset: R() * 1000, kind: "clerk" });
   }
-  // guards walk between connected rooms through doors
-  const doorEdges = shuffle(R, edges.filter((e) => e[0].nb.includes(e[1].id) && e[0] !== spawnRoom && e[1] !== spawnRoom));
-  const nGuards = Math.min(doorEdges.length, 1 + Math.floor(R() * 2));
-  for (let k = 0; k < nGuards; k++) {
-    const [a, b, dir] = doorEdges[k];
-    const pts = dir === "h" ? [[a.rc, a.cc], [b.rc, b.cc]] : [[a.rc, a.cc], [b.rc, b.cc]];
-    // straight lines only (doors are centred)
-    if (dir === "h" && a.rc !== b.rc) continue;
-    if (dir === "v" && a.cc !== b.cc) continue;
-    patrols.push({ pts, speed: 2.4, offset: R() * 20, kind: "guard" });
+  if (S.guards) {
+    const nGuards = (S.clerks === "many" ? 2 : 1) + (R() < 0.5 ? 1 : 0);
+    for (let k = 0; k < nGuards; k++) {
+      const pts = roamPath(pick(R, nonSpawn), 3 + Math.floor(R() * 3));
+      if (pts) patrols.push({ pts, speed: 2.5, offset: R() * 1000, kind: "guard" });
+    }
   }
 
   // power-up spots: interior, non-border cells of non-spawn rooms
   const powerSpots = [];
-  for (const rm of shuffle(R, rooms.filter((r) => r !== spawnRoom)).slice(0, 6)) {
+  for (const rm of S.powerups ? shuffle(R, rooms.filter((r) => r !== spawnRoom)).slice(0, 6) : []) {
     const r = rm.r0 + 1 + Math.floor(R() * Math.max(1, rm.r1 - rm.r0 - 1));
     const c = rm.c0 + 1 + Math.floor(R() * Math.max(1, rm.c1 - rm.c0 - 1));
     if (solidAt(r, c, true)) continue;
@@ -269,8 +293,8 @@ function loadProtos() {
 }
 
 // ---------- build ----------
-export async function buildWorld(scene, seed) {
-  const map = generateMap(seed);
+export async function buildWorld(scene, seed, settings) {
+  const map = generateMap(seed, settings);
   const { W, H, g, theme } = map;
   const cellToWorld = (r, c) => new THREE.Vector3((c - W / 2 + 0.5) * CS, 0, (r - H / 2 + 0.5) * CS);
   const worldToCell = (x, z) => [Math.floor(z / CS + H / 2), Math.floor(x / CS + W / 2)];

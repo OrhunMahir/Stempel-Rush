@@ -96,3 +96,20 @@ body.host #joinUrl { max-width: 220px; font-size: 14px; }
 #eventTag { position: fixed; left: 50%; top: 58px; transform: translateX(-50%); background: #d7263d; color: #fff; font-weight: 800; padding: 4px 12px; border-radius: 999px; font-size: 14px; pointer-events: none; }
 .scoreLine { color: #6b6f78; font-weight: 700; font-size: 14px; }
 @media (max-width: 560px) { #minimap { width: 110px !important; height: auto !important; top: 52px; } }
+
+/* ---------- menus ---------- */
+.overlay { position: fixed; inset: 0; display: grid; place-items: center; padding: 16px; background: rgba(20,24,34,0.72); z-index: 40; }
+.menuCard { text-align: left; display: flex; flex-direction: column; gap: 12px; max-height: calc(100vh - 32px); overflow: auto; }
+.menuCard h2 { font-family: "Bowlby One", Impact, sans-serif; font-weight: 400; color: var(--stamp); font-size: 34px; margin: 0; transform: rotate(-2deg); text-align: center; }
+.menuRow { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-weight: 700; }
+.menuRow input[type=range] { flex: 1; max-width: 200px; accent-color: var(--stamp); }
+.menuRow select { font: inherit; font-weight: 700; padding: 8px 10px; border-radius: 10px; border: 2px solid var(--ink); background: #fff; min-width: 120px; }
+.toggle { display: flex; align-items: center; gap: 10px; font-weight: 600; cursor: pointer; }
+.toggle input { width: 20px; height: 20px; accent-color: var(--stamp); }
+.wideBtn { font: inherit; font-weight: 700; padding: 12px; border-radius: 12px; background: #fff; border: 2px solid var(--ink); }
+.controls summary { font-weight: 700; cursor: pointer; }
+.controls p { margin: 8px 0 0; line-height: 1.5; font-size: 14px; }
+#menuBtn { position: fixed; left: 12px; bottom: max(14px, env(safe-area-inset-bottom)); width: 48px; height: 48px; border-radius: 12px; background: rgba(0,0,0,.5); color: #fff; font-size: 22px; border: 2px solid rgba(255,255,255,.4); z-index: 15; }
+.lobbyBtns { display: flex; gap: 8px; }
+.sideBtn { flex: 0 0 56px; border-radius: 12px; font-size: 22px; background: #fff; border: 3px solid var(--ink); }
+#settingsSummary { margin-top: 8px; font-size: 12px; }
